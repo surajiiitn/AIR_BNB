@@ -1,16 +1,19 @@
 const express = require("express");
 const app = express();
 const mongoose = require("mongoose");
-const Listing = require("./models/listing.js");
 const path = require("path");
 const methodOverride = require("method-override");
 const port = 8080;
 const ejsMate = require("ejs-mate");
 const MONGO_URL = "mongodb://127.0.0.1:27017/wanderlust";
-const wrapAsync = require("./Utils/wrapAsync.js");
 const ExpressError = require("./Utils/ExpressError.js");
-const {listingSchema,reviewSchema} = require("./schema.js");
-const Review = require("./models/review.js");
+const session = require("express-session");
+const listings = require("./routes/listing.js");
+const reviews = require("./routes/review.js");
+const flash = require("connect-flash");
+const passport = require("passport");
+const localStrategy = require("passport-local");
+const User = require("./models/user.js");
 
 main()
   .then(() => {
@@ -24,6 +27,17 @@ async function main() {
   await mongoose.connect(MONGO_URL);
 }
 
+const sessionOptions = {
+  secret : "mysupersecretcode",
+  resave : false,
+  saveUninitialized : true,
+  cookie :{
+    expires : Date.now() + 1000 * 24 * 7 * 60 * 60,
+    maxAge : 1000 * 24 * 7 * 60 * 60,
+    httpOnly : true,
+  },
+};
+
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.urlencoded({ extended: true }));
@@ -34,101 +48,20 @@ app.engine('ejs',ejsMate);
 app.get("/", (req, res) => {
   res.send("Hi, I am root");
 });
-//Schema validate middleware
-const validateListing = (req,res,next) =>{
-  let {error} = listingSchema.validate(req.body);
-  if(error){
-    throw new ExpressError(400,error);
-  }else{
-    next();
-  }
-}
 
-const validateReview = (req,res,next) =>{
-  let {error} = reviewSchema.validate(req.body);
-  if(error){
-    throw new ExpressError(400,error);
-  }else{
-    next();
-  }
-}
-
-//Index Route
-
-app.get("/listings",wrapAsync(async (req,res)=>{
-    let allListing = await Listing.find({});
-    res.render("listings/index.ejs",{ allListing });
-    console.log(allListing);
-}));
+app.use(session(sessionOptions));
+app.use(flash());
 
 
-//New Route
-app.get("/listings/new",(req,res)=>{
-    res.render("listings/new.ejs");
-}); 
+
+app.use((req,res,next)=>{
+  res.locals.success = req.flash("success");
+  next();
+})
 
 
-//Show Route
-
-app.get("/listings/:id",wrapAsync(async (req,res)=>{
-    let {id} = req.params;
-
-    let listing = await Listing.findById(id).populate("reviews");
-    res.render("listings/show.ejs",{ listing });
-    
-}));
-
-//Create Route
-
-app.post("/listings",validateListing,wrapAsync(async (req,res,next)=>{
-    // let {title, description ,image,price ,country,location} = req.body;
-
-      if(!req.body.listing){
-        throw new ExpressError(404,"Send Valid data");
-      }
-
-        let newListing = new Listing(req.body.listing);
-        await newListing.save();
-        res.redirect("/listings");   
-}));
-
-//Edit Route 
-app.get("/listings/:id/edit",wrapAsync(async (req,res)=>{
-    let {id} = req.params;
-    let listing = await Listing.findById(id);
-
-    res.render("listings/edit.ejs",{listing});
-}));
-
-//Update Route`
-app.put("/listings/:id",validateListing,wrapAsync(async (req,res)=>{
-  let {id} = req.params;
-  await Listing.findByIdAndUpdate(id,{...req.body.listing});
-  res.redirect(`/listings/${id}`);
-}));
-
-//Delete Route
-app.delete("/listings/:id",wrapAsync(async (req,res)=>{
-  let {id} = req.params;
-  let deletedListing = await Listing.findByIdAndDelete(id);
-
-  console.log(deletedListing);
-  res.redirect("/listings");
-}));
-
-//Reviews Post Route
-
-app.post("/listings/:id/reviews",validateReview,wrapAsync(async (req,res)=>{
-  let listing = await Listing.findById(req.params.id);
-  let newReview = new Review(req.body.review);
-  
-  listing.reviews.push(newReview);
-  await newReview.save();
-  await listing.save();
-  res.send("DONE");
-
-}));
-
+app.use("/listings",listings);
+app.use("/listings/:id/reviews",reviews);
 
 app.all("*",(req,res,next)=>{
     next( new ExpressError(404,"Page Not Found !"));
